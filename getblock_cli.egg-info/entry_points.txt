@@ -1,0 +1,2 @@
+[console_scripts]
+getblock = getblock.cli:main
