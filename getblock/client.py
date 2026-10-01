@@ -1,14 +1,9 @@
 import httpx
 
-class GetBlockAPIError(Exception):
-    """Error returned when communicating with the GetBlock API."""
+from getblock.http_client import GetBlockAPIError, GetBlockHTTPClient
 
-    def __init__(self, message: str, status_code: int | None = None, request_id: str | None = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.request_id = request_id
 
-class GetBlockClient:
+class GetBlockClient(GetBlockHTTPClient):
     BASE_URL = "https://public-api.getblock.io"
 
     def __init__(self, api_key: str):
@@ -20,76 +15,6 @@ class GetBlockClient:
             },
             timeout=10.0,
         )
-
-    def _get_error_message(self, response: httpx.Response, fallback: str) -> str:
-        try:
-            data = response.json()
-
-            if isinstance(data, dict) and data.get("error"):
-                message = str(data["error"] or fallback)
-                return message
-
-        except ValueError:
-            pass
-
-        return fallback
-
-    def _request(self, method: str, path: str, **kwargs):
-        try: 
-            response = self.client.request(method, path, **kwargs)
-        except httpx.TimeoutException:
-            raise GetBlockAPIError("Request to GetBlock timed out.")
-        except httpx.RequestError:
-            raise GetBlockAPIError("Unable to connect to GetBlock.")
-
-        if response.status_code == 401:
-            message = self._get_error_message(response, "Authentication failed. Check your GetBlock API key.")
-
-            raise GetBlockAPIError(
-                message,
-                status_code=401
-            )
-        if response.status_code == 404:
-            message = self._get_error_message(response, "Requested resource was not found.")
-            raise GetBlockAPIError(
-                message,
-                status_code=404
-            )
-        if response.status_code == 502:
-            message = self._get_error_message(response, "GetBlock service is temporarily unavailable.")
-            raise GetBlockAPIError(
-                message,
-                status_code=502
-            )
-        if response.status_code == 400:
-            message = self._get_error_message(response, "Invalid request or unsupported configuration.")
-            raise GetBlockAPIError(
-                message,
-                status_code=400,
-            )
-        if response.status_code == 403:
-            message = self._get_error_message(response, "Your GetBlock plan does not allow this operation.")
-            raise GetBlockAPIError(
-                message,
-                status_code=403,
-            )
-        if response.status_code == 429:
-            message = self._get_error_message(response, "Too many requests. Please try again later.")
-            raise GetBlockAPIError(
-                message,
-                status_code=429,
-            )
-
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError:
-            message = self._get_error_message(response, f"GetBlock API returned HTTP: {response.status_code}.")
-            raise GetBlockAPIError(
-                message,
-                status_code=response.status_code
-            )
-
-        return response
 
     def get_me(self):
         response = self._request("GET", "/api/v1/me")
@@ -162,4 +87,153 @@ class GetBlockClient:
         )
 
         return response.json()
-    
+
+    def get_dedicated_nodes(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        protocol: str | None = None,
+        network: str | None = None,
+        region: str | None = None,
+        status: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "protocol": protocol,
+            "network": network,
+            "region": region,
+            "status": status,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/dedicated", params=params)
+        return response.json()
+
+    def get_dedicated_node(self, node_id: str):
+        response = self._request("GET", f"/api/v1/dedicated/{node_id}")
+        return response.json()
+
+    def create_dedicated_token(
+        self,
+        node_id: str,
+        api: str,
+        addon: str = "",
+    ):
+        payload = {"api": api, "addon": addon}
+        response = self._request("POST", f"/api/v1/dedicated/{node_id}/tokens", json=payload)
+        return response.json()
+
+    def get_limitless_nodes(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        protocol: str | None = None,
+        network: str | None = None,
+        region: str | None = None,
+        status: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "protocol": protocol,
+            "network": network,
+            "region": region,
+            "status": status,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/limitless", params=params)
+        return response.json()
+
+    def get_limitless_node(self, node_id: str):
+        response = self._request("GET", f"/api/v1/limitless/{node_id}")
+        return response.json()
+
+    def create_limitless_token(
+        self,
+        node_id: str,
+        api: str,
+        addon: str = "",
+    ):
+        payload = {"api": api, "addon": addon}
+        response = self._request("POST", f"/api/v1/limitless/{node_id}/tokens", json=payload)
+        return response.json()
+
+    def get_subscription(self):
+        response = self._request("GET", "/api/v1/subscription")
+        return response.json()
+
+    def get_subscriptions(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        product_type: str | None = None,
+        status: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "product_type": product_type,
+            "status": status,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/subscriptions", params=params)
+        return response.json()
+
+    def get_subscription_by_id(self, subscription_id: str):
+        response = self._request("GET", f"/api/v1/subscriptions/{subscription_id}")
+        return response.json()
+
+    def get_protocols(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        search: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "search": search,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/protocols", params=params)
+        return response.json()
+
+    def get_protocol(self, protocol_id: str):
+        response = self._request("GET", f"/api/v1/protocols/{protocol_id}")
+        return response.json()
+
+    def get_addons(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        search: str | None = None,
+        protocol: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "search": search,
+            "protocol": protocol,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/addons", params=params)
+        return response.json()
+
+    def get_pricing(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        search: str | None = None,
+    ):
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "search": search,
+        }
+        params = {key: value for key, value in params.items() if value is not None}
+        response = self._request("GET", "/api/v1/pricing", params=params)
+        return response.json()
+
+    def get_balance(self):
+        response = self._request("GET", "/api/v1/balance")
+        return response.json()

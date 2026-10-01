@@ -1,0 +1,56 @@
+import httpx
+import pytest
+
+from getblock import cli
+from getblock.client import GetBlockClient
+
+
+@pytest.fixture(autouse=True)
+def block_real_network(monkeypatch):
+    def blocked(*args, **kwargs):
+        pytest.fail("Tests must use httpx.MockTransport, never the real network")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked)
+
+
+@pytest.fixture
+def mock_client(monkeypatch):
+    clients = []
+    original_client = httpx.Client
+
+    def make(handler):
+        def transport_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original_client(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "Client", transport_client)
+        client = GetBlockClient("fake-api-key")
+        clients.append(client.client)
+        monkeypatch.setattr(cli, "get_api_key", lambda: "fake-api-key")
+        monkeypatch.setattr(cli, "GetBlockClient", lambda api_key: client)
+        return client
+
+    yield make
+    for client in clients:
+        client.close()
+
+
+@pytest.fixture
+def advanced_client(monkeypatch):
+    from getblock.advanced_client import AdvancedGetBlockClient
+
+    clients = []
+
+    def make(handler):
+        transport = httpx.Client(
+            base_url="https://advanced.example.test",
+            transport=httpx.MockTransport(handler),
+        )
+        clients.append(transport)
+        client = AdvancedGetBlockClient(transport)
+        monkeypatch.setattr(cli, "get_authenticated_advanced_client", lambda: client)
+        return client
+
+    yield make
+    for client in clients:
+        client.close()
