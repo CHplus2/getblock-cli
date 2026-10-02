@@ -114,10 +114,12 @@ class AdvancedGetBlockClient(GetBlockHTTPClient):
         response = self._request("POST", "/v1/aml/wallet-check", json=payload)
         return response.json()
 
-    def check_aml_transaction(self, tx: str, network: str):
+    def check_aml_transaction(self, tx: str, network: str, asset: str | None = None):
         payload = {
             "tx": tx,
             "network": network,
         }
+        if asset is not None:
+            payload["asset"] = asset
         response = self._request("POST", "/v1/aml/tx-check", json=payload)
         return response.json()

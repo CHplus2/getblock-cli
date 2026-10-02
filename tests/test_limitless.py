@@ -63,11 +63,11 @@ def test_cli_get_limitless_nodes(mock_client):
         return httpx.Response(200, json={'total': 1, 'limit': 20, 'offset': 0, 'nodes': [{'id': 'abc123'}]})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['limitless', 'list'])
+    result = CliRunner().invoke(cli.app, ['limitless', 'list', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'total': 1, 'limit': 20, 'offset': 0, 'nodes': [{'id': 'abc123'}]}" in result.output
+    assert json.loads(result.stdout) == {'total': 1, 'limit': 20, 'offset': 0, 'nodes': [{'id': 'abc123'}]}
 
 
 def test_get_limitless_node_defaults(mock_client):
@@ -95,11 +95,11 @@ def test_cli_get_limitless_node(mock_client):
         return httpx.Response(200, json={'id': 'abc123'})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['limitless', 'get', 'abc123'])
+    result = CliRunner().invoke(cli.app, ['limitless', 'get', 'abc123', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'id': 'abc123'}" in result.output
+    assert json.loads(result.stdout) == {'id': 'abc123'}
 
 
 def test_get_limitless_node_not_found(mock_client):
@@ -152,11 +152,11 @@ def test_cli_create_limitless_token(mock_client):
         return httpx.Response(201, json={'id': 'abc123'})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['limitless', 'tokens', 'create', 'abc123', '--api', 'json-rpc'])
+    result = CliRunner().invoke(cli.app, ['limitless', 'tokens', 'create', 'abc123', '--api', 'json-rpc', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'id': 'abc123'}" in result.output
+    assert json.loads(result.stdout) == {'id': 'abc123'}
 
 
 def test_cli_create_limitless_token_requires_api(monkeypatch):
@@ -164,7 +164,7 @@ def test_cli_create_limitless_token_requires_api(monkeypatch):
         pytest.fail("Invalid arguments must not create a client")
 
     monkeypatch.setattr(cli, "get_authenticated_client", unexpected_client)
-    result = CliRunner().invoke(cli.app, ['limitless', 'tokens', 'create', 'abc123'])
+    result = CliRunner().invoke(cli.app, ['limitless', 'tokens', 'create', 'abc123', '--json'])
     assert result.exit_code == 2
 
 

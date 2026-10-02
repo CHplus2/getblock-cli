@@ -1,3 +1,4 @@
+from advanced_payloads import AML_ADDRESS, AML_TRANSACTION
 import json
 
 import httpx
@@ -10,7 +11,7 @@ from getblock import cli
 
 @pytest.mark.parametrize("status_code", [200])
 def test_check_aml_wallet(advanced_client, status_code):
-    expected = {'data': {'schemaVersion': '1.0', 'overallRiskScore': 0, 'test_nested_detail': {'items': [0, {'test_flag': False}]}}}
+    expected = AML_ADDRESS
 
     def handler(request):
         assert request.method == 'POST'
@@ -33,19 +34,19 @@ def test_cli_check_aml_wallet(advanced_client):
         assert request.url.path == '/v1/aml/wallet-check'
         assert dict(request.url.params) == {}
         assert json.loads(request.content) == {'address': 'test-address', 'network': 'ETH'}
-        return httpx.Response(200, json={'data': {'schemaVersion': '1.0', 'overallRiskScore': 0, 'test_nested_detail': {'items': [0, {'test_flag': False}]}}})
+        return httpx.Response(200, json=AML_ADDRESS)
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['aml', 'wallet-check', '--address', 'test-address', '--network', 'ETH'])
+    result = CliRunner().invoke(cli.app, ['aml', 'wallet-check', '--address', 'test-address', '--network', 'ETH', '--json', '--yes'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {'schemaVersion': '1.0', 'overallRiskScore': 0, 'test_nested_detail': {'items': [0, {'test_flag': False}]}}}" in result.output
+    assert json.loads(result.stdout) == AML_ADDRESS
 
 
 
 @pytest.mark.parametrize("status_code", [200])
 def test_check_aml_transaction(advanced_client, status_code):
-    expected = {'data': {'riskScore': 0}}
+    expected = AML_TRANSACTION
 
     def handler(request):
         assert request.method == 'POST'
@@ -68,10 +69,10 @@ def test_cli_check_aml_transaction(advanced_client):
         assert request.url.path == '/v1/aml/tx-check'
         assert dict(request.url.params) == {}
         assert json.loads(request.content) == {'tx': 'test-transaction', 'network': 'ETH'}
-        return httpx.Response(200, json={'data': {'riskScore': 0}})
+        return httpx.Response(200, json=AML_TRANSACTION)
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['aml', 'tx-check', '--tx', 'test-transaction', '--network', 'ETH'])
+    result = CliRunner().invoke(cli.app, ['aml', 'tx-check', '--tx', 'test-transaction', '--network', 'ETH', '--json', '--yes'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {'riskScore': 0}}" in result.output
+    assert json.loads(result.stdout) == AML_TRANSACTION

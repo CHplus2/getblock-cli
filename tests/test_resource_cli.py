@@ -81,5 +81,5 @@ def test_new_commands_require_authentication(monkeypatch, args):
 
     monkeypatch.setattr(cli, "GetBlockClient", unexpected_client)
     result = CliRunner().invoke(cli.app, args)
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     assert "getblock auth login" in result.output

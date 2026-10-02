@@ -1,3 +1,4 @@
+import json
 import httpx
 from typer.testing import CliRunner
 
@@ -59,8 +60,8 @@ def test_cli_get_addons(mock_client):
         return httpx.Response(200, json={'total': 1, 'limit': 20, 'offset': 0, 'addons': [{'id': 'abc123'}]})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['addons', 'list'])
+    result = CliRunner().invoke(cli.app, ['addons', 'list', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'total': 1, 'limit': 20, 'offset': 0, 'addons': [{'id': 'abc123'}]}" in result.output
+    assert json.loads(result.stdout) == {'total': 1, 'limit': 20, 'offset': 0, 'addons': [{'id': 'abc123'}]}

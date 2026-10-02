@@ -1,3 +1,4 @@
+import json
 import httpx
 from typer.testing import CliRunner
 
@@ -29,8 +30,8 @@ def test_cli_get_balance(mock_client):
         return httpx.Response(200, json={'cu': {'total_balance': 0, 'main_balance': 0, 'extra_balance': 0}, 'credits': {'balance_cents': 10000}})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['balance'])
+    result = CliRunner().invoke(cli.app, ['balance', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'cu': {'total_balance': 0, 'main_balance': 0, 'extra_balance': 0}, 'credits': {'balance_cents': 10000}}" in result.output
+    assert json.loads(result.stdout) == {'cu': {'total_balance': 0, 'main_balance': 0, 'extra_balance': 0}, 'credits': {'balance_cents': 10000}}

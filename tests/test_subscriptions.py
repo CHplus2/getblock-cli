@@ -1,3 +1,4 @@
+import json
 import httpx
 import pytest
 from typer.testing import CliRunner
@@ -31,11 +32,11 @@ def test_cli_get_subscription(mock_client):
         return httpx.Response(200, json={'has_plan': False, 'plan': None})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['subscription'])
+    result = CliRunner().invoke(cli.app, ['subscription', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'has_plan': False, 'plan': None}" in result.output
+    assert json.loads(result.stdout) == {'has_plan': False, 'plan': None}
 
 
 def test_get_subscriptions_defaults(mock_client):
@@ -93,11 +94,11 @@ def test_cli_get_subscriptions(mock_client):
         return httpx.Response(200, json={'total': 1, 'limit': 20, 'offset': 0, 'subscriptions': [{'id': 'abc123'}]})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['subscriptions', 'list'])
+    result = CliRunner().invoke(cli.app, ['subscriptions', 'list', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'total': 1, 'limit': 20, 'offset': 0, 'subscriptions': [{'id': 'abc123'}]}" in result.output
+    assert json.loads(result.stdout) == {'total': 1, 'limit': 20, 'offset': 0, 'subscriptions': [{'id': 'abc123'}]}
 
 
 def test_get_subscription_by_id_defaults(mock_client):
@@ -125,11 +126,11 @@ def test_cli_get_subscription_by_id(mock_client):
         return httpx.Response(200, json={'id': 'abc123'})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['subscriptions', 'get', 'abc123'])
+    result = CliRunner().invoke(cli.app, ['subscriptions', 'get', 'abc123', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'id': 'abc123'}" in result.output
+    assert json.loads(result.stdout) == {'id': 'abc123'}
 
 
 def test_get_subscription_by_id_not_found(mock_client):

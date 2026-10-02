@@ -1,3 +1,4 @@
+from advanced_payloads import ADDRESS_STATUS, ACTIVATION_ESTIMATE
 import json
 
 import httpx
@@ -36,16 +37,16 @@ def test_cli_estimate_tron_price(advanced_client):
         return httpx.Response(200, json={'data': {'price_sun': '1000000', 'trx': '1', 'price_usd': '0.1', 'reserve_usd': '0.2', 'quote_token': 'test-quote'}})
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['tron-energy', 'price-estimate', '--resource-type', 'energy', '--volume', '1', '--duration', 'test-duration'])
+    result = CliRunner().invoke(cli.app, ['tron-energy', 'price-estimate', '--resource-type', 'energy', '--volume', '1', '--duration', 'test-duration', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {'price_sun': '1000000', 'trx': '1', 'price_usd': '0.1', 'reserve_usd': '0.2', 'quote_token': 'test-quote'}}" in result.output
+    assert json.loads(result.stdout) == {'data': {'price_sun': '1000000', 'trx': '1', 'price_usd': '0.1', 'reserve_usd': '0.2', 'quote_token': 'test-quote'}}
 
 
 
 @pytest.mark.parametrize("status_code", [200])
 def test_get_tron_address_status(advanced_client, status_code):
-    expected = {'data': {}}
+    expected = ADDRESS_STATUS
 
     def handler(request):
         assert request.method == 'GET'
@@ -67,19 +68,19 @@ def test_cli_get_tron_address_status(advanced_client):
         assert request.method == 'GET'
         assert request.url.path == '/v1/tron-energy/address-status'
         assert dict(request.url.params) == {'address': 'test-address'}
-        return httpx.Response(200, json={'data': {}})
+        return httpx.Response(200, json=ADDRESS_STATUS)
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['tron-energy', 'address-status', 'test-address'])
+    result = CliRunner().invoke(cli.app, ['tron-energy', 'address-status', 'test-address', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {}}" in result.output
+    assert json.loads(result.stdout) == ADDRESS_STATUS
 
 
 
 @pytest.mark.parametrize("status_code", [200])
 def test_estimate_tron_address_activation(advanced_client, status_code):
-    expected = {'data': {}}
+    expected = ACTIVATION_ESTIMATE
 
     def handler(request):
         assert request.method == 'GET'
@@ -101,10 +102,10 @@ def test_cli_estimate_tron_address_activation(advanced_client):
         assert request.method == 'GET'
         assert request.url.path == '/v1/tron-energy/address-activation-estimate'
         assert dict(request.url.params) == {}
-        return httpx.Response(200, json={'data': {}})
+        return httpx.Response(200, json=ACTIVATION_ESTIMATE)
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['tron-energy', 'address-activation-estimate'])
+    result = CliRunner().invoke(cli.app, ['tron-energy', 'address-activation-estimate', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {}}" in result.output
+    assert json.loads(result.stdout) == ACTIVATION_ESTIMATE

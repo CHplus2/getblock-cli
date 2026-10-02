@@ -1,3 +1,4 @@
+from advanced_payloads import ORDER
 import json
 
 import httpx
@@ -35,16 +36,16 @@ def test_cli_get_tron_orders(advanced_client):
         return httpx.Response(200, json={'data': [], 'total': 0})
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['tron-energy', 'orders', 'list', '--limit', '20', '--offset', '0', '--status', 'pending', '--resource-type', 'energy'])
+    result = CliRunner().invoke(cli.app, ['tron-energy', 'orders', 'list', '--limit', '20', '--offset', '0', '--status', 'pending', '--resource-type', 'energy', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': [], 'total': 0}" in result.output
+    assert json.loads(result.stdout) == {'data': [], 'total': 0}
 
 
 
 @pytest.mark.parametrize("status_code", [200])
 def test_get_tron_order(advanced_client, status_code):
-    expected = {'data': {'orderId': '44a33415-21f6-45a9-b529-91e6503f6c1b'}}
+    expected = ORDER
 
     def handler(request):
         assert request.method == 'GET'
@@ -66,13 +67,13 @@ def test_cli_get_tron_order(advanced_client):
         assert request.method == 'GET'
         assert request.url.path == '/v1/tron-energy/orders/44a33415-21f6-45a9-b529-91e6503f6c1b'
         assert dict(request.url.params) == {}
-        return httpx.Response(200, json={'data': {'orderId': '44a33415-21f6-45a9-b529-91e6503f6c1b'}})
+        return httpx.Response(200, json=ORDER)
 
     advanced_client(handler)
-    result = CliRunner().invoke(cli.app, ['tron-energy', 'orders', 'get', '44a33415-21f6-45a9-b529-91e6503f6c1b'])
+    result = CliRunner().invoke(cli.app, ['tron-energy', 'orders', 'get', '44a33415-21f6-45a9-b529-91e6503f6c1b', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert "{'data': {'orderId': '44a33415-21f6-45a9-b529-91e6503f6c1b'}}" in result.output
+    assert json.loads(result.stdout) == ORDER
 
 
 def test_orders_defaults_preserve_zero_offset(advanced_client):

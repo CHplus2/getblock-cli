@@ -1,3 +1,4 @@
+import json
 import httpx
 import pytest
 from typer.testing import CliRunner
@@ -61,11 +62,11 @@ def test_cli_get_protocols(mock_client):
         return httpx.Response(200, json={'total': 1, 'limit': 20, 'offset': 0, 'protocols': [{'id': 'abc123'}]})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['protocols', 'list'])
+    result = CliRunner().invoke(cli.app, ['protocols', 'list', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'total': 1, 'limit': 20, 'offset': 0, 'protocols': [{'id': 'abc123'}]}" in result.output
+    assert json.loads(result.stdout) == {'total': 1, 'limit': 20, 'offset': 0, 'protocols': [{'id': 'abc123'}]}
 
 
 def test_get_protocol_defaults(mock_client):
@@ -93,11 +94,11 @@ def test_cli_get_protocol(mock_client):
         return httpx.Response(200, json={'id': 'eth', 'name': 'Ethereum', 'based_on': '', 'networks': [{'id': 'mainnet', 'paid_regions': [], 'modes': [{'id': 'full', 'apis': [{'id': 'json-rpc', 'regions': ['eu-central-1']}], 'addons': []}]}]})
 
     mock_client(handler)
-    result = CliRunner().invoke(cli.app, ['protocols', 'get', 'abc123'])
+    result = CliRunner().invoke(cli.app, ['protocols', 'get', 'abc123', '--json'])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert "fake-api-key" not in result.output
-    assert "{'id': 'eth', 'name': 'Ethereum', 'based_on': '', 'networks': [{'id': 'mainnet', 'paid_regions': [], 'modes': [{'id': 'full', 'apis': [{'id': 'json-rpc', 'regions': ['eu-central-1']}], 'addons': []}]}]}" in result.output
+    assert json.loads(result.stdout) == {'id': 'eth', 'name': 'Ethereum', 'based_on': '', 'networks': [{'id': 'mainnet', 'paid_regions': [], 'modes': [{'id': 'full', 'apis': [{'id': 'json-rpc', 'regions': ['eu-central-1']}], 'addons': []}]}]}
 
 
 def test_get_protocol_not_found(mock_client):

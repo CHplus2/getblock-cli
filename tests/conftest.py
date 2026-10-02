@@ -54,3 +54,15 @@ def advanced_client(monkeypatch):
     yield make
     for client in clients:
         client.close()
+
+
+@pytest.fixture(autouse=True)
+def isolate_cli_configuration(monkeypatch):
+    """Never consult a developer's credentials or persisted CLI preferences."""
+    import tempfile
+    import uuid
+    from pathlib import Path
+
+    for name in ("GETBLOCK_API_KEY", "GETBLOCK_PROFILE", "GETBLOCK_OUTPUT", "GETBLOCK_TIMEOUT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GETBLOCK_CONFIG_DIR", str(Path(tempfile.gettempdir()) / ("getblock-config-" + uuid.uuid4().hex)))
