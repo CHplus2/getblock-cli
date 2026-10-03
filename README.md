@@ -443,3 +443,22 @@ Tests use `httpx.MockTransport`, block real HTTP transport, and isolate CLI sett
 from the user's environment. No live Advanced API calls, purchases, delegations,
 activations or audit/AML operations were made. No funds, credits or resources were
 consumed. These are mocked unit tests, not live integration tests. MCP is out of scope.
+
+## Interactive navigation
+
+Run `getblock interactive` in a terminal to navigate numbered menus using Enter.
+The first version covers Account (show, balance, subscription), Protocols and
+Tokens (list and select an item to inspect). Results return to navigation;
+Back, Home and Exit are available, and collection menus offer pagination.
+Equivalent commands are displayed so you can learn commands for scripts.
+
+`getblock --profile production interactive` uses that account profile and the
+existing credential lookup. Authenticate beforehand with `getblock auth login`.
+The menu uses readable, redacted output even if your profile defaults to JSON.
+It does not perform mutations or billable Advanced operations. Advanced live
+access remains unavailable pending authentication documentation.
+
+Bare `getblock` and existing commands are unchanged. Interactive mode requires
+TTY input; redirected/piped input is rejected before reading credentials or
+making requests. Use direct commands with `--json` for automation. Exit ends
+normally; Ctrl+C/EOF cancels with the existing cancellation exit code.

@@ -95,6 +95,7 @@ are not loaded. Hosts, headers, credentials and persistent --yes are not setting
 
 
 EXAMPLES = {
+    "interactive": "",
     'create_webhook': '--input webhook.json --dry-run --json',
     'update_webhook': 'WEBHOOK_ID --input patch.json --dry-run --json',
     'rotate_webhook_secret': 'WEBHOOK_ID --dry-run --json',

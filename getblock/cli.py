@@ -1066,6 +1066,13 @@ def remove_address_list_entries(
     emit(client.remove_address_list_entries(list_id, body["addresses"]))
 
 
+@app.command("interactive", rich_help_panel="CLI tools")
+def interactive():
+    """Navigate account, protocol and token discovery menus (terminal only)."""
+    from getblock.interactive import run
+    run()
+
+
 from getblock.help_topics import configure_help
 
 configure_help(app)
