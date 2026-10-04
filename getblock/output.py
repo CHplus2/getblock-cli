@@ -3,7 +3,9 @@ import csv
 import io
 import json
 import re
+import sys
 import typer
+from getblock.presentation import say, console
 
 COLLECTIONS = ("tokens", "nodes", "subscriptions", "protocols", "addons", "plans", "data", "items", "addresses")
 COLUMNS = ("id", "name", "status", "protocol", "network", "region", "product_type", "currency", "chain", "trigger_type", "entry_count", "event_id", "attempt", "http_status", "latency_ms", "delivered_at", "address")
@@ -38,6 +40,17 @@ def rows_of(data):
     return [{"value": data}]
 
 
+def field_value(row, path):
+    if isinstance(row, dict) and path in row:
+        return row[path]
+    value = row
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            raise ValueError("A selected TSV field is missing from a result.")
+        value = value[part]
+    return value
+
+
 def scalar(value):
     if value is None:
         return "—"
@@ -58,9 +71,7 @@ def render(data, output="table", fields=None):
             raise ValueError("--fields must be unique, comma-separated field names.")
         lines = []
         for row in rows_of(data):
-            if not isinstance(row, dict) or any(key not in row for key in columns):
-                raise ValueError("A selected TSV field is missing from a result.")
-            values = [row[key] for key in columns]
+            values = [field_value(row, key) for key in columns]
             if any(isinstance(value, (list, dict)) for value in values):
                 raise ValueError("TSV fields must be scalar values; use --json for nested data.")
             lines.append(["" if value is None else safe_text(value) for value in values])
@@ -70,30 +81,36 @@ def render(data, output="table", fields=None):
         return
     data = redact(data)
     if isinstance(data, dict) and data.get("has_plan") is False:
-        typer.echo("No active plan")
+        say("No active plan")
         return
     rows = rows_of(data)
     is_list = isinstance(data, list) or (isinstance(data, dict) and any(isinstance(data.get(k), list) for k in COLLECTIONS))
     if is_list and all(isinstance(row, dict) for row in rows):
         columns = [key for key in COLUMNS if any(key in row for row in rows)]
         if not rows:
-            typer.echo("No matching results.")
+            say("No matching results. Adjust filters or create a resource if appropriate.", style="yellow")
         elif columns:
             values = [[scalar(row.get(key)) for key in columns] for row in rows]
             widths = [max(len(key), *(len(row[i]) for row in values)) for i, key in enumerate(columns)]
-            typer.echo("  ".join(key.upper().ljust(widths[i]) for i, key in enumerate(columns)))
-            for row in values:
-                typer.echo("  ".join(value.ljust(widths[i]) for i, value in enumerate(row)))
+            if (sys.stdout.isatty() or console().is_terminal) and sum(widths) + 2 * (len(widths) - 1) > console().width:
+                # Stack rows instead of truncating IDs or creating unreadable wide tables.
+                for index, row in enumerate(rows, 1):
+                    say(f"Result {index}", style="bold")
+                    detail(row, 2)
+            else:
+                say("  ".join(key.upper().ljust(widths[i]) for i, key in enumerate(columns)), style="bold")
+                for row in values:
+                    say("  ".join(value.ljust(widths[i]) for i, value in enumerate(row)))
         else:
             detail(rows)
         if isinstance(data, dict) and "total" in data:
-            typer.echo(f"Returned {len(rows)} of {data['total']} reported results.")
+            say(f"Returned {len(rows)} of {data['total']} reported results.")
             if isinstance(data.get("total"), int) and data.get("offset", 0) + len(rows) < data["total"]:
-                typer.echo("More results: use --paginate, or continue with --offset " + str(data.get("offset", 0) + len(rows)))
+                say("More results: use --paginate, or continue with --offset " + str(data.get("offset", 0) + len(rows)))
         if isinstance(data, dict) and data.get("next_cursor"):
-            typer.echo("More results: use --paginate, or --cursor " + safe_text(data["next_cursor"]))
+            say("More results: use --paginate, or --cursor " + safe_text(data["next_cursor"]))
         if isinstance(data, dict) and "list_id" in data:
-            typer.echo("List ID: " + scalar(data["list_id"]))
+            say("List ID: " + scalar(data["list_id"]))
         return
     detail(data)
 
@@ -108,17 +125,18 @@ def detail(data, indent=0):
             if key == "cu":
                 label = "Compute units (CU)"
             if isinstance(value, (dict, list)):
-                typer.echo(prefix + label + ":")
+                say(prefix + label + ":", style="bold")
                 detail(value, indent + 2)
             else:
-                typer.echo(prefix + label + ": " + scalar(value))
+                style = "green" if (key in ("deleted", "stored", "saved") and value is True) or (key == "status" and value == "active") else ("yellow" if key == "status" and value in ("paused", "pending", "queued") else None)
+                say(prefix + label + ": " + scalar(value), style=style)
     elif isinstance(data, list):
         if not data:
-            typer.echo(prefix + "(none)")
+            say(prefix + "(none)")
         for item in data:
             if isinstance(item, (dict, list)):
                 detail(item, indent + 2)
             else:
-                typer.echo(prefix + "- " + scalar(item))
+                say(prefix + "- " + scalar(item))
     else:
-        typer.echo(prefix + scalar(data))
+        say(prefix + scalar(data))

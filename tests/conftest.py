@@ -63,6 +63,21 @@ def isolate_cli_configuration(monkeypatch):
     import uuid
     from pathlib import Path
 
-    for name in ("GETBLOCK_API_KEY", "GETBLOCK_PROFILE", "GETBLOCK_OUTPUT", "GETBLOCK_TIMEOUT"):
+    for name in ("GETBLOCK_API_KEY", "GETBLOCK_ADVANCED_API_KEY", "GETBLOCK_PROFILE", "GETBLOCK_OUTPUT", "GETBLOCK_TIMEOUT"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli, "get_advanced_api_key", lambda profile="default": None)
     monkeypatch.setenv("GETBLOCK_CONFIG_DIR", str(Path(tempfile.gettempdir()) / ("getblock-config-" + uuid.uuid4().hex)))
+
+
+@pytest.fixture
+def artifact_dir():
+    import tempfile, uuid, shutil
+    from pathlib import Path
+    root=Path(tempfile.gettempdir()).resolve()
+    path=root/('getblock-private-test-'+uuid.uuid4().hex)
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        assert path.resolve().parent==root
+        shutil.rmtree(path)

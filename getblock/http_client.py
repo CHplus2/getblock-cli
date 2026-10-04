@@ -40,7 +40,7 @@ class GetBlockHTTPClient:
             raise PreviewReady({
                 "dry_run": True,
                 "api": "advanced" if path.startswith("/v1/") else "public",
-                "base_url": None if path.startswith("/v1/") else self.BASE_URL,
+                "base_url": self.BASE_URL,
                 "method": method,
                 "path": path,
                 "query": kwargs.get("params", {}),
@@ -52,6 +52,8 @@ class GetBlockHTTPClient:
         def send(arguments):
             try:
                 response = self._send(method, path, **arguments)
+                if state and method not in ("GET", "HEAD"):
+                    state.mutation_succeeded = True
                 if response.status_code != 204:
                     try:
                         response.json()
@@ -137,7 +139,9 @@ class GetBlockHTTPClient:
     def _send(self, method: str, path: str, **kwargs):
         self.last_response = None
         try:
-            response = self.client.request(method, path, **kwargs)
+            from getblock.presentation import waiting
+            with waiting():
+                response = self.client.request(method, path, **kwargs)
         except httpx.TimeoutException:
             raise GetBlockAPIError("Request to GetBlock timed out.")
         except httpx.RequestError:

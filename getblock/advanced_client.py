@@ -1,3 +1,4 @@
+from getblock.paths import path_segment
 import httpx
 
 from getblock.http_client import GetBlockHTTPClient
@@ -6,9 +7,10 @@ from getblock.http_client import GetBlockHTTPClient
 class AdvancedGetBlockClient(GetBlockHTTPClient):
     """Advanced API endpoints, separate from the Public API client.
 
-    Accept an explicitly configured HTTP client until credential compatibility
-    and the authoritative Advanced authentication contract are established.
+    Accept a caller-owned HTTP client. The CLI supplies a separate Bearer key.
     """
+
+    BASE_URL = "https://services.getblock.io"
 
     def __init__(self, client: httpx.Client):
         # The caller owns the configured client and its lifetime.
@@ -52,7 +54,7 @@ class AdvancedGetBlockClient(GetBlockHTTPClient):
         return response.json()
 
     def get_tron_order(self, order_id: str):
-        response = self._request("GET", f"/v1/tron-energy/orders/{order_id}")
+        response = self._request("GET", f"/v1/tron-energy/orders/{path_segment(order_id)}")
         return response.json()
 
     def delegate_tron_energy(self, target_address: str, volume: int, duration: str, quote_token: str):

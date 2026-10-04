@@ -221,9 +221,9 @@ def test_nested_json_file_and_dry_run(monkeypatch):
     assert json.loads(result.stdout)["body"] == body
 
 
-def test_secret_human_redaction(mock_client):
+def test_secret_human_redaction(mock_client, artifact_dir):
     mock_client(lambda request: httpx.Response(200, json={"secret": "whsec_private", "version": 4}))
-    result = run(["--verbose", "webhooks", "secret", "rotate", "wh_test", "--yes"])
+    result = run(["--verbose", "webhooks", "secret", "rotate", "wh_test", "--yes", "--save-secret", str(artifact_dir / "secret.txt")])
     assert result.exit_code == 0, result.output
     assert "whsec_private" not in result.output
     assert "[redacted]" in result.stdout

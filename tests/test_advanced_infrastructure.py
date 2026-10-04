@@ -99,5 +99,5 @@ def test_advanced_auth_does_not_guess_or_read_public_credentials(monkeypatch, ca
     monkeypatch.setattr(sys, "argv", ["getblock", "tron-energy", "address-activation-estimate"])
     with pytest.raises(SystemExit) as error:
         cli.main()
-    assert error.value.code == 1
+    assert error.value.code == 4
     assert "Advanced API authentication is not configured" in capsys.readouterr().err

@@ -2,6 +2,8 @@
 import inspect
 TOPICS = {
     "workflows": """GET STARTED
+  getblock doctor
+  getblock setup
   getblock auth login
   getblock auth status --check
   getblock account show
@@ -15,7 +17,9 @@ DISCOVER AND CREATE ACCESS
   getblock dedicated tokens create NODE_ID --interactive
   getblock tokens list --paginate --json
 
-ESTIMATE, DELEGATE, TRACK (Advanced connection currently unavailable)
+ESTIMATE, DELEGATE, TRACK (separate Advanced credential required)
+  getblock auth login --api advanced
+  getblock auth status --api advanced --check
   getblock tron-energy price-estimate --resource-type energy --volume VOLUME --duration DURATION --save-quote quote.json
   getblock tron-energy delegate-energy --target-address ADDRESS --volume VOLUME --duration DURATION --quote-file quote.json
   getblock tron-energy orders get ORDER_ID
@@ -29,6 +33,18 @@ AUTOMATION
   getblock aml wallet-check --input request.json --yes --dry-run --json
 JSON retains complete API responses and may contain endpoint credentials.
 All paid commands require --yes without a terminal; no automatic POST retries.
+
+PREPARE AND DEBUG
+  getblock webhooks create --generate-input
+  getblock webhooks create --input webhook.json --validate-only --json
+  getblock endpoints check --token-id TOKEN_ID
+  getblock endpoints request --token-id TOKEN_ID --input rpc.json --dry-run --json
+  getblock webhooks deliveries WEBHOOK_ID --watch --timeout 60 --json
+  getblock tokens list --json --jq '.tokens[].id'
+Endpoint checks support Ethereum JSON-RPC and may consume quota. Delivery watch
+emits changed first-page snapshots (JSON Lines) until exit 5; it is not a complete
+event stream. --jq requires jq installed on PATH. Local validation does not check
+server rules or permissions.
 """,
     "shell": """COMPLETION (offline, no API calls)
   getblock --install-completion
@@ -47,24 +63,30 @@ BASH / ZSH
   getblock aml wallet-check --input request.json --yes --dry-run --json
 
 Use --json explicitly in scripts. Data goes to stdout; diagnostics go to stderr.
-Human output is plain text, with no ANSI colors or pager; NO_COLOR is respected.
+Human output uses terminal-aware color. Use getblock --color never COMMAND or
+NO_COLOR to disable it. JSON and TSV never contain presentation colors.
 Do not place API keys in command-line arguments or shell history. Configure the
 CI secret GETBLOCK_API_KEY for Public API calls. --with-key reads from stdin.
 """,
-    "advanced": """ADVANCED SERVICES: CONNECTION UNAVAILABLE
-The authoritative Advanced host, authentication header, and compatibility with
-stored Public API keys have not been established. No credential is sent to an
-Advanced service. Do not assume GETBLOCK_API_KEY authenticates this surface.
+    "advanced": """ADVANCED SERVICES: SEPARATE BEARER CREDENTIAL
+Production base URL: https://services.getblock.io, with Authorization: Bearer KEY.
+Use auth login --api advanced or GETBLOCK_ADVANCED_API_KEY. Public credentials
+are never reused automatically. Obtain an issued Advanced key from your service
+administrator; compatibility with Public keys is not assumed.
+The CLI is covered by mocked tests, not verified against the live Advanced service.
 
-Available offline:
+Examples:
+  getblock auth login --api advanced
   getblock auth status --api advanced
+  getblock auth status --api advanced --check
   getblock tron-energy delegate-energy --target-address ADDRESS --volume 1 --duration DURATION --quote-token QUOTE --dry-run --json
   getblock wallet-audit audit --network ETH --address ADDRESS --dry-run
 
 Previews omit credentials and redact quote tokens. They do not verify price,
 server acceptance, quote expiry, or balance. Paths use /v1/, never /api/v1/.
-Watch can poll once authentication is established, but no terminal-state
-semantics are assumed for charged or delivered_uncharged.
+The read-only --check calls GET /v1/tron-energy/orders with limit=1. It verifies
+orders read access, not permissions for all operations. Watch assumes no terminal
+semantics for charged or delivered_uncharged.
 """,
     "exit-codes": """EXIT CODES
   0  Requested operation completed, or offline preview rendered.
@@ -95,6 +117,10 @@ are not loaded. Hosts, headers, credentials and persistent --yes are not setting
 
 
 EXAMPLES = {
+    "doctor": "--api both --json",
+    "setup": "",
+    "check_endpoint": "--token-id TOKEN_ID --dry-run --json",
+    "request_endpoint": "--token-id TOKEN_ID --input rpc.json --dry-run --json",
     "interactive": "",
     'create_webhook': '--input webhook.json --dry-run --json',
     'update_webhook': 'WEBHOOK_ID --input patch.json --dry-run --json',
@@ -157,7 +183,7 @@ def configure_help(group, path="getblock"):
         example = EXAMPLES.get(function.__name__, "--json")
         details = "Example: " + path + " " + name + " " + example
         if path.startswith("getblock tron-energy") or path.startswith("getblock wallet-audit") or path.startswith("getblock rug-pull") or path.startswith("getblock aml"):
-            details += "\n\nAdvanced connection unavailable. --dry-run is offline; see getblock help advanced."
+            details += "\n\nAuthentication: getblock auth login --api advanced. --dry-run is offline; see getblock help advanced."
         elif path not in ("getblock config", "getblock auth") and name not in ("help",):
             details += "\n\nAuthentication: getblock auth login. Raw --json responses retain all fields; token responses may contain credentials."
         if "tokens" in path:

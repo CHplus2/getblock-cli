@@ -9,6 +9,7 @@ import copy
 from contextlib import redirect_stdout
 from pathlib import Path
 
+# Typer 0.27 vendors Click. Pin this dependency and exercise parse errors in CI.
 from typer.core import _click as click
 import typer
 from typer.core import TyperGroup
@@ -20,6 +21,7 @@ from getblock.http_client import GetBlockAPIError
 
 @dataclass
 class Runtime:
+    color: str = "auto"
     profile: str = "default"
     output: str = "table"
     timeout: float = 10
@@ -28,6 +30,7 @@ class Runtime:
     dry_run: bool = False
     paginate: bool = False
     max_pages: int | None = None
+    mutation_succeeded: bool = False
     operation: str = "getblock"
     secrets: list = field(default_factory=list)
     clients: list = field(default_factory=list)
@@ -56,6 +59,8 @@ def clean(message, state=None):
 
 
 def report(error, state):
+    if state.mutation_succeeded:
+        error = CLIError("The server accepted the operation, but response processing or output failed. Inspect the resource before retrying. " + clean(str(error), state), 1)
     status = getattr(error, "status_code", None)
     code = getattr(error, "code", 4 if status == 401 else 1)
     hint = {
@@ -66,6 +71,8 @@ def report(error, state):
     if status == 401 and getattr(state, "advanced", False):
         hint = "Run getblock auth status --api advanced and see getblock help advanced; Public credentials may not apply."
     detail = {"message": clean(str(error), state), "operation": state.operation, "exit_code": code}
+    if state.mutation_succeeded:
+        detail["operation_succeeded"] = True
     if status is not None:
         detail["status_code"] = status
     if getattr(error, "request_id", None):
@@ -83,7 +90,8 @@ def report(error, state):
     if state.output == "json":
         typer.echo(json.dumps({"error": detail}), err=True)
     else:
-        typer.echo("Error: " + detail["message"], err=True)
+        from getblock.presentation import say
+        say("Error: " + detail["message"], style="red", err=True)
         if "upstream_message" in detail:
             typer.echo("Upstream: " + detail["upstream_message"], err=True)
         if status:
@@ -91,7 +99,7 @@ def report(error, state):
         if "request_id" in detail:
             typer.echo("Request ID: " + detail["request_id"], err=True)
         if hint:
-            typer.echo(hint, err=True)
+            say(hint, style="yellow", err=True)
     return code
 
 
@@ -136,7 +144,11 @@ def emit(data):
         from getblock.workflows import save_quote
         save_quote(destination, state.quote_inputs, data)
         state.quote_destination = None
-    render(data, state.output, state.fields)
+    if getattr(state, "jq_expression", None) is not None:
+        from getblock.json_query import apply
+        typer.echo(apply(state.jq_executable, state.jq_expression, data), nl=False)
+    else:
+        render(data, state.output, state.fields)
 
 
 def is_interactive():
@@ -181,14 +193,14 @@ def complete_from(values):
     return complete
 
 
-def command(*, collection=False, paid=False, mutation=None, advanced=False, input_fields=None, interactive=False, quote=False, estimate=False):
+def command(*, collection=False, paid=False, mutation=None, advanced=False, input_fields=None, interactive=False, quote=False, estimate=False, input_template=None):
     """Add the same explicit options to existing Typer handlers without API logic."""
     def decorate(function):
         signature = inspect.signature(function)
         original = signature.parameters
         parameters = list(original.values())
         required = {p.name for p in parameters if getattr(p.default, "default", None) is Ellipsis}
-        flexible = set(input_fields or {}) | (required if interactive else set()) | ({"quote_token"} if quote else set())
+        flexible = set(input_fields or {}) | (required if interactive else set()) | ({"quote_token"} if quote else set()) | ({"request_file"} if input_template else set())
         parameters = [p.replace(default=copy.copy(p.default)) for p in parameters]
         for p in parameters:
             if p.name in flexible and p.name in required and isinstance(p.default, typer.models.OptionInfo):
@@ -196,6 +208,8 @@ def command(*, collection=False, paid=False, mutation=None, advanced=False, inpu
                 alternatives = []
                 if input_fields:
                     alternatives.append("--input")
+                if input_template:
+                    alternatives.append("--generate-input")
                 if interactive:
                     alternatives.append("--interactive")
                 if quote and p.name == "quote_token":
@@ -217,7 +231,13 @@ def command(*, collection=False, paid=False, mutation=None, advanced=False, inpu
             ("json_output", bool, typer.Option(False, "--json", help="Full JSON response; may contain endpoint credentials.")),
             ("fields", str | None, typer.Option(None, help="TSV scalar fields, for example id,protocol.")),
             ("dry_run", bool, typer.Option(False, "--dry-run", help="Preview a redacted request locally; no network or server validation.")),
+            ("jq_expression", str | None, typer.Option(None, "--jq", help="Filter JSON with jq on PATH; requires JSON output. Explicit exports may contain secrets.")),
         ]
+        if input_fields or input_template:
+            options += [
+                ("generate_input", bool, typer.Option(False, "--generate-input", help="Print a placeholder JSON body offline; sends no request.")),
+                ("validate_only", bool, typer.Option(False, "--validate-only", help="Validate local request structure offline; does not check server rules.")),
+            ]
         if collection:
             options += [("paginate", bool, typer.Option(False, help="Fetch all pages; JSON is an array of page responses.")), ("max_pages", int | None, typer.Option(None, min=1, help="Stop after this many pages; reaching the bound before exhaustion is an error."))]
         if input_fields:
@@ -251,11 +271,32 @@ def command(*, collection=False, paid=False, mutation=None, advanced=False, inpu
             state.dry_run = kwargs.pop("dry_run", False)
             state.paginate = kwargs.pop("paginate", False)
             state.max_pages = kwargs.pop("max_pages", None)
+            state.jq_expression = kwargs.pop("jq_expression", None)
+            validate_only = kwargs.pop("validate_only", False)
+            generate_input = kwargs.pop("generate_input", False)
             token = current.set(state)
             try:
                 if json_output and selected_output not in (None, "json"):
                     raise CLIError("--json conflicts with --output.", 2)
                 config.validate("output", state.output)
+                if state.jq_expression is not None:
+                    if state.output != "json":
+                        raise CLIError("--jq requires --json or --output json.", 2)
+                    from getblock.json_query import prepare
+                    state.jq_executable = prepare(state.jq_expression)
+                if generate_input:
+                    if validate_only or state.dry_run or kwargs.get("input_file") or kwargs.get("request_file") or kwargs.get("interactive"):
+                        raise CLIError("--generate-input cannot be combined with input, validation, previews or interactive creation.", 2)
+                    for name in (input_fields or {}):
+                        if getattr(ctx.get_parameter_source(name), "name", None) == "COMMANDLINE":
+                            raise CLIError("--generate-input conflicts with explicit body flags.", 2)
+                    template = input_template or {key: (1 if original[name].annotation is int else "REPLACE_" + key.upper()) for name, key in input_fields.items() if name in required}
+                    typer.echo(json.dumps(template, indent=2))
+                    return
+                if validate_only:
+                    if state.dry_run or kwargs.get("interactive") or kwargs.get("save_quote") or kwargs.get("save_secret"):
+                        raise CLIError("--validate-only cannot be combined with dry-run, interactive creation or saved output.", 2)
+                    state.dry_run = True
                 if state.fields and state.output != "tsv":
                     raise CLIError("--fields requires --output tsv.", 2)
                 if state.output == "tsv" and not state.fields:
@@ -328,7 +369,7 @@ def command(*, collection=False, paid=False, mutation=None, advanced=False, inpu
             except BrokenPipeError:
                 return
             except PreviewReady as preview:
-                emit(preview.data)
+                emit({"valid": True, "scope": "local request structure only", "server_validated": False} if validate_only else preview.data)
             except (CLIError, GetBlockAPIError, ValueError, OSError) as error:
                 if isinstance(error, (ValueError, OSError)):
                     error = CLIError(str(error), 2 if isinstance(error, ValueError) else 1)

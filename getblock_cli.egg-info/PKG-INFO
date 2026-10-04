@@ -3,6 +3,9 @@ Name: getblock-cli
 Version: 0.1.0
 Summary: Command-line interface for the GetBlock API
 Requires-Python: >=3.10
-Requires-Dist: typer>=0.27.0
-Requires-Dist: httpx>=0.27.0
-Requires-Dist: keyring>=25.0.0
+Requires-Dist: typer==0.27.2
+Requires-Dist: httpx<0.29,>=0.28.1
+Requires-Dist: keyring<26,>=25.7.0
+Requires-Dist: rich<16,>=15.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"

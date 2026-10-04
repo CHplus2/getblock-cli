@@ -1,10 +1,10 @@
 # GetBlock CLI
 
 A Python developer CLI built with Typer, httpx, and keyring. Public API commands
-manage account access and discover endpoint configurations. Advanced API client
-methods and command workflows are implemented, but their live connection remains
-disabled until the authoritative host, authentication header, and credential
-compatibility are established. Offline Advanced previews work now.
+manage account access and discover endpoint configurations. Advanced commands use
+https://services.getblock.io with a separately configured Bearer credential.
+Public credentials are never reused for Advanced requests automatically. These
+connections are covered by mocked tests; live Advanced integration remains unverified.
 
 ## Get started
 
@@ -24,10 +24,74 @@ getblock help workflows
 Root help groups account/access, nodes, catalog, and Advanced services.
 Command help includes examples, prerequisites, related commands and output notes.
 
+## Developer workflows
+
+```sh
+getblock doctor
+getblock doctor --api both --check-network --json
+getblock setup
+getblock webhooks create --generate-input
+getblock webhooks create --input webhook.json --validate-only --json
+getblock endpoints check --token-id TOKEN_ID
+getblock endpoints request --token-id TOKEN_ID --input rpc.json --dry-run --json
+getblock tokens list --json --jq '.tokens[].id'
+getblock webhooks deliveries WEBHOOK_ID --watch --interval 5 --timeout 60 --json
+```
+
+`doctor` defaults to offline Public diagnosis. `--api both` includes Advanced;
+`--check-network` performs only read-only authentication checks for configured
+credentials. It reports failures with fixes, exits 1 when any check fails, and
+can diagnose malformed configuration. Its JSON report is on stdout even on a
+failed diagnosis. Keyring access can still prompt through the operating system.
+
+`setup` is a terminal-only Public onboarding flow: sign in if needed, verify
+account access, choose a supported token configuration, confirm creation, and
+show the equivalent command. Running that command again creates another token.
+It uses the selected profile and existing environment-credential precedence.
+
+Body commands offer `--generate-input` and `--validate-only`. Generated JSON
+contains placeholders, not a ready-to-submit configuration. Replace them first.
+Local validation reuses request construction but performs no HTTP requests,
+credential lookup, file output or mutations. It checks only the constraints the
+CLI implements; server-side enum values, nested Notify grammar, quotas and other
+business rules remain server-validated. Positional IDs are still required for
+resource-specific commands. Endpoint templates also require `--token-id`.
+
+Endpoint commands resolve the selected token's returned `endpoint` field; they
+never construct an endpoint URL from its resource ID. URLs must be HTTPS on a
+GetBlock subdomain, without user information, custom ports or fragments. RPC
+requests never receive management API authorization headers, follow redirects,
+or retry automatically. `check` currently supports `protocol=eth` and sends one
+documented `eth_blockNumber` request, which may consume quota. Other chains can
+use `request` with their documented JSON-RPC payload. Requests require confirmation
+or `--yes` because arbitrary methods may change blockchain state. Only single
+JSON-RPC 2.0 objects with request IDs are supported; no batches or notifications.
+Transport and RPC errors exit nonzero. An endpoint preview performs no token
+lookup, so it cannot verify the endpoint or protocol.
+Reference: [GetBlock access tokens and Ethereum example](https://docs.getblock.io/getting-started/authentication-with-access-tokens).
+
+`--jq` requires the external jq executable on PATH and JSON output. The CLI
+checks availability and syntax before making requests, then passes the complete
+JSON result to jq over stdin without a shell. Paginated input retains the array
+of complete pages. Output consists of compact JSON values, one per line; strings
+remain quoted. Query failures emit no partial query output. A runtime query error
+after a mutation reports that the server accepted the operation. Webhook creation
+and rotation require `--save-secret` when filtering so a query cannot discard the
+one-time signing secret. Reference: [jq manual](https://jqlang.org/manual/).
+
+Delivery `--watch` polls the first page and emits only changed page snapshots;
+JSON mode produces JSON Lines, not one JSON document. It exits 5 at the deadline
+and may already have emitted snapshots. It cannot combine with cursor pagination,
+TSV, jq or dry-run. This is not a complete event stream: logs may be sampled and
+successful production deliveries are omitted. Automatic `webhooks test --wait`
+is intentionally not added: the supplied contract has not established reliable
+test-event-to-delivery correlation. Use `webhooks test` once, inspect delivery
+snapshots, and use statistics for totals; the CLI never resends tests automatically.
+
 ## Output and scripting
 
-Human output is plain text: lists use columns and details use labeled sections.
-No ANSI decoration or pager is applied, and identifiers are not truncated.
+Human output uses terminal-aware colors: lists use columns and details use labeled
+sections. Use --color never or NO_COLOR for plain text. No pager is applied, and identifiers are not truncated.
 Credential-bearing fields such as endpoint URLs and quote tokens are redacted in
 human output. Missing values are distinguished from zero. Pricing remains in
 whole stated-currency units; credit balances remain labeled in cents.
@@ -49,7 +113,7 @@ getblock tokens list --json | jq -r '.tokens[].id'
 - `--json` / `--output json` returns the complete API response, including wrappers,
   nested data, and any returned endpoint credentials. Treat exports as sensitive.
 - JSON selection is explicit: redirecting stdout does not change its schema.
-- TSV has no header. It requires named scalar fields; missing/nested fields fail
+- TSV has no header. It requires scalar fields (including dot paths such as data.id); missing fields or selected objects/arrays fail
   without a partial output. Selected values are explicit exports, not redacted.
 - Data goes to stdout; diagnostics and prompts go to stderr. JSON errors have
   an `error` object with message, operation, exit code and available status/request ID.
@@ -68,16 +132,25 @@ getblock --profile production auth login
 getblock --profile production balance
 getblock --profile production auth logout
 getblock auth status --api advanced
+getblock auth login --api advanced
+getblock auth status --api advanced --check
+getblock auth logout --api advanced
 ```
 
-Login stores a Public API key in the OS keyring without claiming it was verified.
+Login stores the selected API key in the OS keyring without claiming it was verified.
 `--with-key` reads one key from stdin; API keys are not accepted as argv options.
 `auth status` inspects configuration without network access; `--check` uses only
-Public `GET /api/v1/me`. Status reports the source and verification result without
+Public `GET /api/v1/me`, or Advanced `GET /v1/tron-energy/orders?limit=1&offset=0`.
+Advanced verification establishes orders-read access, not all service permissions.
+Status reports the source and verification result without
 printing the key. There is no plaintext credential-store fallback.
 
 For CI, inject `GETBLOCK_API_KEY` through the CI secret facility. It overrides the
 selected profile's stored Public credential; it is never assumed valid for Advanced.
+Advanced uses `GETBLOCK_ADVANCED_API_KEY` or its own per-profile keyring entry.
+Both services use Bearer headers, but key compatibility is not assumed. Obtain an
+Advanced credential from the service administrator; the supplied docs describe
+issuance through an Internal API, which this CLI does not call.
 The `default` profile keeps the original `getblock_api_key` keyring entry; named
 profiles have separate entries. Logout removes only the selected stored entry and
 reports if an environment credential remains active. Profiles are account names,
@@ -174,7 +247,7 @@ getblock tokens delete TOKEN_ID --dry-run
 
 `--dry-run` uses the same client methods that construct live requests, but stops
 before HTTP client creation or credential access. It displays method, path, query,
-and redacted body; unknown Advanced base URL is `null`. No network, balance check,
+and redacted body; Advanced previews show `https://services.getblock.io`. No network, balance check,
 quote validation, price verification, or operation occurs. Preview one page at a
 time; it cannot be combined with pagination or interactive catalog discovery.
 Local commands such as logout/config set preview their local action instead.
@@ -195,12 +268,13 @@ Exit codes: `0` success/preview, `1` operational failure, `2` usage/input error,
 `3` cancellation or missing consent, `4` authentication/keyring failure,
 `5` watch deadline. See `getblock help exit-codes`.
 
-## Advanced workflows: connection pending
+## Advanced workflows
 
-Existing paths and payloads remain `/v1/...` without `/api`. See
-`getblock help advanced` for the authentication prerequisite. The separate
-`AdvancedGetBlockClient` still accepts a caller-owned configured httpx client.
-No new authentication scheme or live-service endpoint has been guessed.
+Existing paths and payloads remain `/v1/...` without `/api`. Run
+`getblock auth login --api advanced` or set `GETBLOCK_ADVANCED_API_KEY`.
+The supplied production contract specifies `https://services.getblock.io` and
+`Authorization: Bearer KEY`. Redirects are not followed. The separate
+`AdvancedGetBlockClient` also accepts a caller-owned configured httpx client.
 
 ```text
 getblock tron-energy price-estimate --resource-type energy --volume VOLUME --duration DURATION --save-quote quote.json
@@ -219,8 +293,9 @@ getblock aml wallet-check --network NETWORK --address ADDRESS
 getblock aml tx-check --network NETWORK --tx TRANSACTION
 ```
 
-These live workflows remain unavailable through the CLI pending authentication.
-They are covered by mocked tests and can be inspected with `--dry-run`.
+These workflows require an explicitly configured Advanced credential. They are
+covered by mocked tests and can be inspected with `--dry-run`. No live Advanced
+requests have been used to verify this implementation.
 
 A saved quote contains `inputs` and the full `estimate` response, including its
 sensitive quote token. Use a private directory (especially on Windows, where
@@ -260,8 +335,9 @@ Advanced contract notes:
 
 The schema extract still hides some required/nullable metadata and the inner
 counterparty-object definitions. Those details are not guessed. It also does
-not establish the Advanced host/authentication contract; live Advanced access
-remains unavailable. Contract coverage uses mocked responses, including the
+not establish compatibility between Public and Advanced credentials; they remain
+separate. Host and Bearer format come from the subsequently supplied Servers and
+authentication description. Contract coverage uses mocked responses, including the
 supplied complete AML address report, not live integration tests.
 
 ## Notify: webhooks and address lists
@@ -361,8 +437,20 @@ There are no automatic POST retries, including on `test_event_unavailable`:
 a timed-out test may still be delivered, and retrying creates another event.
 
 Creation and secret rotation return a signing secret only once. Human output
-redacts it; use `--json` to capture the complete response securely when executing
-these commands. TSV explicitly selecting `secret` also exposes it. Diagnostics
+requires `--save-secret FILE`; alternatively explicitly choose `--json` or TSV
+with `--fields secret` to capture it yourself. Existing files are never overwritten.
+The destination is reserved before the request, with POSIX mode 0600 or a protected
+Windows DACL granting the current user and any restricted-process identities access.
+No inherited broad groups are granted. A failed request/write may leave an empty
+or partial private file; inspect it and choose a new destination before retrying.
+`--dry-run` never creates the file. Raw JSON still includes the secret if requested.
+
+```sh
+getblock webhooks create --input webhook.json --save-secret webhook-secret.txt
+getblock webhooks secret rotate WEBHOOK_ID --save-secret new-secret.txt --yes
+```
+
+These examples perform live mutations when run with valid credentials. Diagnostics
 never log response bodies. Routine rotation sends no body and allows the previous
 secret for 24 hours. `--expire-previous` sends `{"expire_previous":true}` and
 expires it immediately. A second rotation during overlap retires the older
@@ -446,19 +534,69 @@ consumed. These are mocked unit tests, not live integration tests. MCP is out of
 
 ## Interactive navigation
 
-Run `getblock interactive` in a terminal to navigate numbered menus using Enter.
-The first version covers Account (show, balance, subscription), Protocols and
-Tokens (list and select an item to inspect). Results return to navigation;
-Back, Home and Exit are available, and collection menus offer pagination.
-Equivalent commands are displayed so you can learn commands for scripts.
+Run `getblock interactive` and choose a number. Account offers identity, balance
+and subscription. Protocols, Tokens, Webhooks, Address lists, Dedicated nodes
+and Limitless nodes offer one selectable list instead of separate List/Inspect
+flows. Breadcrumbs show your location. Selecting an item opens details; Back
+restores the cached page. Next/Previous pages, Refresh, Home and Exit are available.
+Filtering matches names or IDs on the current page only; it does not claim to
+search the whole account. Refresh reloads from the first page.
 
-`getblock --profile production interactive` uses that account profile and the
-existing credential lookup. Authenticate beforehand with `getblock auth login`.
-The menu uses readable, redacted output even if your profile defaults to JSON.
-It does not perform mutations or billable Advanced operations. Advanced live
-access remains unavailable pending authentication documentation.
+Equivalent commands are displayed, including a selected `--profile`. Login uses
+the existing hidden prompt and keyring storage, and authentication failures offer
+Sign in. An environment key still takes precedence over a stored key.
+The menu uses readable, redacted output even if the profile defaults to JSON.
+Resource browsing is read-only; Login explicitly changes stored credentials.
+Advanced commands require a separately configured credential; use `getblock auth login --api advanced`.
 
-Bare `getblock` and existing commands are unchanged. Interactive mode requires
-TTY input; redirected/piped input is rejected before reading credentials or
-making requests. Use direct commands with `--json` for automation. Exit ends
-normally; Ctrl+C/EOF cancels with the existing cancellation exit code.
+Bare `getblock` and existing command paths are unchanged. Interactive mode requires
+TTY input; use direct commands for scripts. Exit ends normally; Ctrl+C/EOF cancels
+with the existing cancellation exit code.
+
+## Terminal presentation and safe automation
+
+Use `getblock --color auto|always|never COMMAND`. Auto enables color only on a
+supported terminal; `NO_COLOR` takes precedence over always. JSON/TSV output is
+never decorated. Headings, success labels, warnings, errors and command hints use
+restrained styles. API values are literal text, never Rich markup. Wide tables
+switch to stacked details on narrow terminals to preserve complete identifiers.
+A transient loading indicator appears only for human terminal requests on stderr.
+
+TSV accepts nested scalar fields, for example:
+
+```sh
+getblock tron-energy orders get ORDER_ID --output tsv --fields data.id,data.status
+```
+
+For list responses, fields are relative to each item as before. JSON retains the
+original response. If a mutation was accepted but decoding, saving or formatting
+fails, the error explicitly says the server accepted it and advises inspection
+before retrying. JSON errors include `operation_succeeded: true`. This is not a
+claim of delivery/completion for HTTP 202 operations.
+
+Resource identifiers are kept in a single URL path segment. IDs containing URL
+separators, traversal, control characters, or encoded equivalents are rejected
+before HTTP; ordinary identifiers are encoded without changing their spelling.
+Endpoint methods, field names and query parameters are unchanged.
+
+## Reproducible development and CI
+
+Install the pinned development dependency set:
+
+```sh
+python -m pip install -r requirements-dev.lock
+python -m pip install --no-deps -e .
+python -B -m pytest -q -p no:cacheprovider
+python -m build --no-isolation
+```
+
+Typer is pinned because this version vendors Click and the error adapter relies
+on that interface. Update the lock and dependency bounds together with tests.
+The lock includes platform-specific keyring dependencies; these are version pins,
+not a cryptographic dependency-integrity lock.
+
+The GitHub Actions matrix covers Python 3.10–3.14 on Windows, Linux and macOS. It
+builds a wheel, installs it, copies tests outside the repository and verifies the
+installed command's help/version. Tests block live HTTP. Cross-platform CI results
+must be checked after the workflow runs; configuring the matrix is not evidence
+that every runner has passed. Built wheels exclude bytecode/cache files.

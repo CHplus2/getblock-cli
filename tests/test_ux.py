@@ -215,7 +215,7 @@ def test_auth_check_makes_only_me_request(mock_client):
 def test_advanced_preflight_before_confirmation(monkeypatch):
     monkeypatch.setattr(ux, "confirm", lambda *args: pytest.fail("Unavailable Advanced auth must fail before consent"))
     result = run(["wallet-audit", "audit", "--network", "ETH", "--address", "A", "--json"])
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     assert "authentication" in json.loads(result.stderr)["error"]["message"]
 
 

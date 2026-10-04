@@ -17,7 +17,8 @@ def choose(label, values, selected=None):
         if selected not in values:
             raise CLIError(f"Selected {label} is not available in the returned configuration.", 2)
         return selected
-    typer.echo(label.capitalize() + ":", err=True)
+    from getblock.presentation import say
+    say(label + ":", style="bold", err=True)
     for i, value in enumerate(values, 1):
         typer.echo(f"  {i}. {safe_text(value) if value else '(no addon)'}", err=True)
     while True:

@@ -12,11 +12,12 @@ from getblock.ux import emit, CLIError
 from getblock.advanced_client import AdvancedGetBlockClient
 from getblock.client import GetBlockClient, GetBlockAPIError
 from getblock.auth import save_api_key, get_api_key, delete_api_key
+from getblock.auth import save_advanced_api_key, get_advanced_api_key, delete_advanced_api_key
 
 app = typer.Typer(
     cls=ux.UXGroup,
     name = "getblock",
-    help = "Manage account access, discover node configurations, and track operations. Start with auth login, then account show; see help workflows for examples. Advanced live access is unavailable; offline --dry-run previews work.",
+    help = "Manage account access, discover node configurations, and track operations. Start with auth login, then account show; see help workflows for examples. Advanced services use a separately configured Bearer key.",
 )
 
 tokens_app = typer.Typer(
@@ -63,11 +64,24 @@ def get_authenticated_advanced_client() -> AdvancedGetBlockClient:
         client = AdvancedGetBlockClient.__new__(AdvancedGetBlockClient)
         client.preview = True
         return client
-    raise GetBlockAPIError(
-        "Advanced API authentication is not configured: authoritative host, "
-        "authentication header, and Public API key compatibility are required. "
-        "Use --dry-run to inspect a request or getblock help advanced for details."
-    )
+    for client in state.clients:
+        if getattr(client, "_cli_surface", None) == "advanced":
+            return client
+    try:
+        api_key = os.environ.get("GETBLOCK_ADVANCED_API_KEY") or get_advanced_api_key(state.profile)
+    except keyring.errors.KeyringError:
+        raise CLIError("Cannot access Advanced credentials. Configure keyring or GETBLOCK_ADVANCED_API_KEY.", 4)
+    if not api_key:
+        raise CLIError("Advanced API authentication is not configured. Run 'getblock auth login --api advanced' or set GETBLOCK_ADVANCED_API_KEY. Public credentials are never reused automatically.", 4)
+    state.secrets.append(api_key)
+    client = AdvancedGetBlockClient(httpx.Client(
+        base_url=AdvancedGetBlockClient.BASE_URL,
+        headers={"Authorization": "Bearer " + api_key, "Accept": "application/json"},
+        timeout=state.timeout, follow_redirects=False,
+    ))
+    client._cli_surface = "advanced"
+    state.clients.append(client)
+    return client
 
 
 def show_version(value: bool):
@@ -78,23 +92,33 @@ def show_version(value: bool):
 
 @app.callback()
 def callback(
+    ctx: typer.Context,
     profile: str = typer.Option("default", envvar="GETBLOCK_PROFILE", help="Account profile; credentials stay in keyring."),
     timeout: float | None = typer.Option(None, help="Request timeout in seconds; overrides environment and profile."),
+    color: str = typer.Option("auto", "--color", help="Human output colors: auto, always, never. NO_COLOR takes precedence."),
     verbose: bool = typer.Option(False, "--verbose", help="Redacted request diagnostics on stderr."),
     version: bool = typer.Option(False, "--version", callback=show_version, is_eager=True),
 ):
     """Manage account access, discover node configurations, and inspect operations.
 
     Start with auth login, then account show. Use help workflows for examples.
-    Advanced services are unavailable pending authentication documentation;
-    their --dry-run previews work offline.
+    Advanced services require auth login --api advanced; Public keys are separate.
     """
     state = ux.current.get()
     if state is None:
         state = ux.Runtime()
         ux.current.set(state)
+    if color not in ("auto", "always", "never"):
+        raise CLIError("--color must be auto, always or never.", 2)
+    state.color = color
     state.profile = config.profile_name(profile)
-    settings, origins = config.resolve(state.profile, timeout=timeout)
+    try:
+        settings, origins = config.resolve(state.profile, timeout=timeout)
+    except ValueError as error:
+        if ctx.invoked_subcommand != "doctor":
+            raise
+        state.config_error = str(error)
+        settings, origins = dict(config.DEFAULTS), {key: "fallback for diagnosis" for key in config.DEFAULTS}
     state.config_values = settings
     state.config_origins = origins
     state.output = "json" if getattr(state, "explicit_json", False) else settings["output"]
@@ -224,10 +248,12 @@ def rotate_token(
 @auth_app.command("login")
 @ux.command()
 def auth_login(
-    with_key: bool = typer.Option(False, "--with-key", help="Read a Public API key from stdin, never from argv."),
+    with_key: bool = typer.Option(False, "--with-key", help="Read the selected API key from stdin, never from argv."),
+    api: str = typer.Option("public", help="Credential to store: public or advanced."),
 ):
-    """Store a Public API key in keyring. Verify separately with auth status --check."""
+    """Store a separate key for the selected API. Saving does not verify access."""
     state = ux.current.get()
+    _validate_api(api)
     if state.dry_run:
         raise CLIError("Login stores credentials; --dry-run is not supported.", 2)
     if with_key:
@@ -235,60 +261,80 @@ def auth_login(
     else:
         if not ux.is_interactive():
             raise CLIError("Use --with-key to read a key from stdin in noninteractive use.", 2)
-        api_key = ux.prompt("Public API key", hide_input=True)
+        api_key = ux.prompt(api.capitalize() + " API key", hide_input=True)
     if not api_key or "\n" in api_key or "\r" in api_key:
         raise CLIError("Provide one nonempty API key.", 2)
     state.secrets.append(api_key)
     try:
-        save_api_key(api_key, state.profile)
+        (save_advanced_api_key if api == "advanced" else save_api_key)(api_key, state.profile)
     except keyring.errors.KeyringError:
         raise CLIError("Cannot save to keyring. Configure a credential-store backend; no plaintext fallback is used.", 4)
-    emit({"profile": state.profile, "stored": True, "verified": False})
+    emit({"api": api, "profile": state.profile, "stored": True, "verified": False})
+
+
+def _validate_api(api):
+    if api not in ("public", "advanced"):
+        raise CLIError("--api must be public or advanced.", 2)
+
+
+def credential_status(api):
+    _validate_api(api)
+    state = ux.current.get()
+    env_name = "GETBLOCK_ADVANCED_API_KEY" if api == "advanced" else "GETBLOCK_API_KEY"
+    environment = os.environ.get(env_name)
+    getter = get_advanced_api_key if api == "advanced" else get_api_key
+    try:
+        key = environment or (getter() if state.profile == "default" else getter(state.profile))
+    except keyring.errors.KeyringError:
+        raise CLIError(f"Cannot access keyring. Configure the credential store or {env_name}.", 4)
+    if key:
+        state.secrets.append(key)
+    return {"api": api, "profile": state.profile, "configured": bool(key),
+            "source": ("environment" if environment else "keyring") if key else None, "verified": False}
 
 
 @auth_app.command("status")
 @ux.command()
 def auth_status(
-    check: bool = typer.Option(False, "--check", help="Verify Public credentials through GET /api/v1/me."),
+    check: bool = typer.Option(False, "--check", help="Verify through a read-only GET: Public me, or Advanced orders (limit 1)."),
     api: str = typer.Option("public", help="API surface: public or advanced."),
 ):
     """Distinguish stored credentials from verified access. Never display the key."""
     state = ux.current.get()
-    if api not in ("public", "advanced"):
-        raise CLIError("--api must be public or advanced.", 2)
-    if api == "advanced":
-        if check:
-            get_authenticated_advanced_client()
-        emit({"api": api, "available": False, "reason": "Authentication contract unconfirmed; use help advanced."})
-        return
+    _validate_api(api)
+    state.advanced = api == "advanced"
+    def verify():
+        if api == "advanced":
+            get_authenticated_advanced_client().get_tron_orders(limit=1)
+        else:
+            get_authenticated_client().get_me()
     if state.dry_run:
         if not check:
             raise CLIError("Use auth status --check --dry-run to preview verification.", 2)
-        get_authenticated_client().get_me()
+        verify()
         return
-    source = "environment" if os.environ.get("GETBLOCK_API_KEY") else "keyring"
-    try:
-        configured = bool(os.environ.get("GETBLOCK_API_KEY") or (get_api_key() if state.profile == "default" else get_api_key(state.profile)))
-    except keyring.errors.KeyringError:
-        raise CLIError("Cannot access keyring. Configure the credential store or GETBLOCK_API_KEY.", 4)
+    result = credential_status(api)
     if check:
-        get_authenticated_client().get_me()
-    emit({"api": api, "profile": state.profile, "configured": configured, "source": source if configured else None, "verified": bool(check)})
+        verify()
+        result["verified"] = True
+        result["verification_scope"] = "orders read" if api == "advanced" else "account read"
+    emit(result)
 
 
 @auth_app.command("logout")
 @ux.command()
-def auth_logout():
+def auth_logout(api: str = typer.Option("public", help="Credential to remove: public or advanced.")):
     """Remove this profile's stored key. Environment credentials are unaffected."""
     state = ux.current.get()
+    _validate_api(api)
     if state.dry_run:
-        emit({"dry_run": True, "action": "remove stored credential", "profile": state.profile})
+        emit({"dry_run": True, "action": "remove stored credential", "api": api, "profile": state.profile})
         return
     try:
-        delete_api_key(state.profile)
+        (delete_advanced_api_key if api == "advanced" else delete_api_key)(state.profile)
     except keyring.errors.KeyringError:
         raise CLIError("Cannot remove credential from keyring. Check the credential store.", 4)
-    emit({"profile": state.profile, "stored": False, "environment_active": bool(os.environ.get("GETBLOCK_API_KEY"))})
+    emit({"api": api, "profile": state.profile, "stored": False, "environment_active": bool(os.environ.get("GETBLOCK_ADVANCED_API_KEY" if api == "advanced" else "GETBLOCK_API_KEY"))})
 
 
 dedicated_app = typer.Typer(help="Browse GetBlock dedicated nodes.")
@@ -515,7 +561,7 @@ def get_balance():
 
 
 tron_energy_app = typer.Typer(help="GetBlock tron-energy services.")
-app.add_typer(tron_energy_app, name="tron-energy", rich_help_panel="Advanced services (connection unavailable)")
+app.add_typer(tron_energy_app, name="tron-energy", rich_help_panel="Advanced services (separate credential)")
 
 
 @tron_energy_app.command("price-estimate")
@@ -648,7 +694,7 @@ def activate_tron_address(
 
 
 wallet_audit_app = typer.Typer(help="GetBlock wallet-audit services.")
-app.add_typer(wallet_audit_app, name="wallet-audit", rich_help_panel="Advanced services (connection unavailable)")
+app.add_typer(wallet_audit_app, name="wallet-audit", rich_help_panel="Advanced services (separate credential)")
 
 
 @wallet_audit_app.command("audit")
@@ -682,7 +728,7 @@ def check_wallet(
 
 
 rug_pull_app = typer.Typer(help="GetBlock rug-pull services.")
-app.add_typer(rug_pull_app, name="rug-pull", rich_help_panel="Advanced services (connection unavailable)")
+app.add_typer(rug_pull_app, name="rug-pull", rich_help_panel="Advanced services (separate credential)")
 
 
 @rug_pull_app.command("check")
@@ -701,7 +747,7 @@ def check_rug_pull(
 
 
 aml_app = typer.Typer(help="GetBlock AML services.")
-app.add_typer(aml_app, name="aml", rich_help_panel="Advanced services (connection unavailable)")
+app.add_typer(aml_app, name="aml", rich_help_panel="Advanced services (separate credential)")
 
 
 @aml_app.command("wallet-check")
@@ -840,18 +886,42 @@ def _notify_body(path, allowed, required=()):
     return body
 
 
+def _webhook_secret_result(request, destination):
+    state = ux.current.get()
+    if state.dry_run:
+        request()
+        return
+    if destination:
+        from getblock.secret_files import secret_destination, write_secret
+        with secret_destination(destination) as stream:
+            data = request()
+            write_secret(stream, data)
+        if state.output == "table":
+            typer.echo("Signing secret saved to the requested private file.", err=True)
+        emit(data)
+    else:
+        if getattr(state, "jq_expression", None) is not None:
+            raise CLIError("Use --save-secret with --jq so filtering cannot discard the one-time signing secret.", 2)
+        if state.output == "table" or (state.output == "tsv" and "secret" not in [field.strip() for field in (state.fields or "").split(",")]):
+            raise CLIError("Capture this one-time secret with --save-secret FILE or explicitly request --json. No request was sent.", 2)
+        emit(request())
+
+
 @webhooks_app.command("create")
-@ux.command()
-def create_webhook(request_file: str = typer.Option(..., "--input", help="Webhook JSON object from file, or - for stdin.")):
+@ux.command(input_template={"chain": "REPLACE_CHAIN", "trigger_type": "address_activity", "phases": ["confirmed"], "target_url": "https://example.invalid/replace-receiver", "addresses": ["REPLACE_ADDRESS"]})
+def create_webhook(
+    request_file: str = typer.Option(..., "--input", help="Webhook JSON object from file, or - for stdin."),
+    save_secret: str | None = typer.Option(None, "--save-secret", help="Save the one-time secret to a NEW private file; refuses overwrite."),
+):
     """Create a webhook. Use --json to capture its one-time signing secret."""
     body = _notify_body(request_file,
         ("name", "chain", "network", "trigger_type", "filters", "confirm_depth", "phases", "target_url", "batching", "addresses", "list_refs"),
         ("chain", "trigger_type", "phases", "target_url"))
-    emit(get_authenticated_client().create_webhook(body))
+    _webhook_secret_result(lambda: get_authenticated_client().create_webhook(body), save_secret)
 
 
 @webhooks_app.command("update")
-@ux.command()
+@ux.command(input_template={"name": "REPLACE_NAME"})
 def update_webhook(
     webhook_id: str = typer.Argument(..., help="Webhook ID."),
     request_file: str = typer.Option(..., "--input", help="PATCH JSON object from file, or - for stdin; omitted keys stay unchanged."),
@@ -866,11 +936,12 @@ def update_webhook(
 @ux.command(mutation="A second rotation during the 24-hour overlap retires the older secret immediately. --expire-previous also retires the current secret immediately.")
 def rotate_webhook_secret(
     webhook_id: str = typer.Argument(..., help="Webhook ID."),
+    save_secret: str | None = typer.Option(None, "--save-secret", help="Save the new secret to a NEW private file; refuses overwrite."),
     expire_previous: bool = typer.Option(False, "--expire-previous", help="Immediately expire the previous secret; otherwise allow the documented 24-hour overlap."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm secret rotation."),
 ):
     """Rotate the signing secret. Capture the one-time secret with --json."""
-    emit(get_authenticated_client().rotate_webhook_secret(webhook_id, True if expire_previous else None))
+    _webhook_secret_result(lambda: get_authenticated_client().rotate_webhook_secret(webhook_id, True if expire_previous else None), save_secret)
 
 
 @webhooks_app.command("deliveries")
@@ -882,13 +953,23 @@ def get_webhook_deliveries(
     from_time: str | None = typer.Option(None, "--from", help="RFC 3339 inclusive start time."),
     to_time: str | None = typer.Option(None, "--to", help="RFC 3339 exclusive end time."),
     status: list[str] | None = typer.Option(None, help="Repeatable or comma-separated: delivered, retrying, failed_terminal, replayed.", autocompletion=ux.complete_from(["delivered", "retrying", "failed_terminal", "replayed"])),
+    watch: bool = typer.Option(False, help="Poll the first page until the deadline; JSON emits changed page snapshots as JSON Lines."),
+    interval: float = typer.Option(5, min=0.1, help="Seconds between watch reads."),
+    timeout: float = typer.Option(60, min=0.1, help="Watch deadline; exits 5 when reached."),
 ):
     """Inspect retries/failures and test events. Logs may be sampled; use stats for totals."""
-    emit(get_authenticated_client().get_webhook_deliveries(webhook_id, limit, cursor, from_time, to_time, status))
+    state = ux.current.get()
+    if watch:
+        if cursor or state.paginate or state.dry_run or state.output == "tsv" or getattr(state, "jq_expression", None):
+            raise CLIError("--watch reads the first page; omit cursor, pagination, dry-run, TSV and jq.", 2)
+        from getblock.developer_tools import watch_deliveries
+        watch_deliveries(webhook_id, limit, from_time, to_time, status, interval, timeout)
+    else:
+        emit(get_authenticated_client().get_webhook_deliveries(webhook_id, limit, cursor, from_time, to_time, status))
 
 
 @address_lists_app.command("create")
-@ux.command()
+@ux.command(input_template={"name": "REPLACE_NAME", "addresses": []})
 def create_address_list(request_file: str = typer.Option(..., "--input", help="JSON object with name and optional addresses; file or - for stdin.")):
     """Create a named address list, optionally with initial addresses."""
     body = _notify_body(request_file, ("name", "addresses"), ("name",))
@@ -1019,7 +1100,7 @@ def delete_address_list(
 
 
 @address_entries_app.command("add")
-@ux.command()
+@ux.command(input_template={"addresses": ["REPLACE_ADDRESS"]})
 def add_address_list_entries(
     list_id: str = typer.Argument(..., help="Address list ID."),
     request_file: str = typer.Option(..., "--input", help="JSON object containing addresses; file or - for stdin."),
@@ -1033,7 +1114,7 @@ def add_address_list_entries(
 
 
 @address_entries_app.command("replace")
-@ux.command()
+@ux.command(input_template={"addresses": ["REPLACE_ADDRESS"]})
 def replace_address_list_entries(
     list_id: str = typer.Argument(..., help="Address list ID."),
     request_file: str = typer.Option(..., "--input", help="JSON object containing addresses; file or - for stdin."),
@@ -1050,7 +1131,7 @@ def replace_address_list_entries(
 
 
 @address_entries_app.command("remove")
-@ux.command()
+@ux.command(input_template={"addresses": ["REPLACE_ADDRESS"]})
 def remove_address_list_entries(
     list_id: str = typer.Argument(..., help="Address list ID."),
     request_file: str = typer.Option(..., "--input", help="JSON object containing addresses; file or - for stdin."),
@@ -1068,11 +1149,15 @@ def remove_address_list_entries(
 
 @app.command("interactive", rich_help_panel="CLI tools")
 def interactive():
-    """Navigate account, protocol and token discovery menus (terminal only)."""
+    """Browse accounts, protocols, tokens, webhooks and nodes; sign in (terminal only)."""
     from getblock.interactive import run
     run()
 
 
+from getblock.developer_tools import register as register_developer_tools
+from getblock.endpoints import app as endpoints_app
+register_developer_tools(app)
+app.add_typer(endpoints_app, name="endpoints", rich_help_panel="Developer workflows")
 from getblock.help_topics import configure_help
 
 configure_help(app)
